@@ -1,11 +1,27 @@
 from vpython import graph, gcurve, rate, color, canvas, cylinder, vec, label
 import random
 import numpy as np  # Necesario para manejar los ángulos
+import csv
 
 max_points = 100  # Número máximo de puntos antes de eliminar los más antiguos
 visible_time = 10  # Mostrar los últimos 10 segundos
 fps = 10  # Frecuencia de actualización de la gráfica
 max_points = visible_time * fps  # Máximo de puntos antes de desplazar
+
+# Ángulos iniciales de rotación (en radianes)
+angle_x = 0
+angle_y = 0
+angle_z = 0
+
+# Flag de datos desactualizados
+out_of_date = True  # Cambia esto a True para ver la advertencia
+
+#Data storage
+removed_pressure = []
+removed_temperature = []
+removed_humidity = []
+removed_time = []
+
 
 # Layout container that the 3D model is placed inside of
 cansat_canvas = canvas(align="left",background=vec(0.15, 0.15, 0.15), width = 750)
@@ -27,14 +43,6 @@ cansat_body = cylinder(
 
 # Partes que deben girar con el cuerpo
 rotating_parts = [cansat_body]
-
-# Ángulos iniciales de rotación (en radianes)
-angle_x = 0
-angle_y = 0
-angle_z = 0
-
-# Flag de datos desactualizados
-out_of_date = True  # Cambia esto a True para ver la advertencia
 
 warning_label = label(
     pos=vec(0, 2, 0),
@@ -146,6 +154,11 @@ while True:
     atmospheric_pressure_curve.plot(i/fps, pressure)
     temperature_curve.plot(i / fps, temperature)  # Normaliza el tiempo en segundos
     relative_humidity_curve.plot(i/fps, humidity)
+
+    
+    # Abrir archivo en modo append para agregar datos sin borrar los anteriores
+    with open("removed_data.csv", "a", newline="") as file:
+        writer = csv.writer(file)
     
     # Desplazar la gráfica cuando alcanza el límite de tiempo
     if i > max_points:
@@ -156,8 +169,17 @@ while True:
         relative_humidity_graph.xmin += 1 / fps
         relative_humidity_graph.xmax += 1 / fps
 
+        removed_time.append(i / fps - visible_time)  # Guarda el tiempo de los datos eliminados
+        removed_pressure.append(pressure)  # Guarda la presión eliminada
+        removed_temperature.append(temperature)  # Guarda la temperatura eliminada
+        removed_humidity.append(humidity)  # Guarda la humedad eliminada
+
+        # Escribir la última línea eliminada en el archivo
+        writer.writerow([removed_time[-1], removed_pressure[-1], removed_temperature[-1], removed_humidity[-1]])
+
+
     # Increment index
     i += 1
 
     # Update frequency in Hz
-    rate(fps)  
+    rate(fps)
