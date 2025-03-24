@@ -90,7 +90,7 @@ atmospheric_pressure_graph = graph(
     foreground=color.black,  # Letras blancas
     width=750
 )
-atmospheric_pressure_curve = gcurve(graph=atmospheric_pressure_graph, color=color.red, width=4)
+atmospheric_pressure_curve = gcurve(graph=atmospheric_pressure_graph, color=color.red, width=3)
 
 # Crear la gráfica con fondo negro
 temperature_graph = graph(
@@ -124,8 +124,7 @@ relative_humidity_graph = graph(
     foreground=color.black,
     width=750
 )
-relative_humidity_curve = gcurve(graph=relative_humidity_graph, color=color.green, width=4)
-
+relative_humidity_curve = gcurve(graph=relative_humidity_graph, color=color.green, width=3)
 
 # Data point index
 i = 0
@@ -154,11 +153,6 @@ while True:
     atmospheric_pressure_curve.plot(i/fps, pressure)
     temperature_curve.plot(i / fps, temperature)  # Normaliza el tiempo en segundos
     relative_humidity_curve.plot(i/fps, humidity)
-
-    
-    # Abrir archivo en modo append para agregar datos sin borrar los anteriores
-    with open("removed_data.csv", "a", newline="") as file:
-        writer = csv.writer(file)
     
     # Desplazar la gráfica cuando alcanza el límite de tiempo
     if i > max_points:
@@ -174,9 +168,12 @@ while True:
         removed_temperature.append(temperature)  # Guarda la temperatura eliminada
         removed_humidity.append(humidity)  # Guarda la humedad eliminada
 
-        # Escribir la última línea eliminada en el archivo
-        writer.writerow([removed_time[-1], removed_pressure[-1], removed_temperature[-1], removed_humidity[-1]])
-
+    # Abrir archivo en modo append para agregar datos sin borrar los anteriores
+    if i % (10 * fps) == 0:
+        with open("removed_data.csv", "a", newline="") as file:
+            writer = csv.writer(file)
+            if removed_time:  # Verifica que hay datos antes de escribir
+                writer.writerow([removed_time[-1], removed_pressure[-1], removed_temperature[-1], removed_humidity[-1]])
 
     # Increment index
     i += 1
