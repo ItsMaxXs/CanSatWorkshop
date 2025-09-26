@@ -139,6 +139,7 @@ while True:
     # Aplicar la nueva orientación
     update_rotation()
     
+    
     if out_of_date:
         warning_label.text = "⚠ Out of Date!"
     else:
