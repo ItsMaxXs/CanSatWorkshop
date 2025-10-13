@@ -4,6 +4,8 @@ import csv
 import threading
 import queue
 import time
+import datetime
+import queue
 
 # 💡 IMPORTAR la lógica del procesador y el iniciador del hilo
 # Esto nos trae: data_queue, start_data_thread, FIELD_NAMES, RECORD_SIZE
@@ -12,8 +14,9 @@ from data_processor_logic import start_data_thread, FIELD_NAMES
 # --- Configuración Compartida e Inicialización ---
 # 1. Creamos la cola que será usada por ambos archivos para comunicarse
 data_queue = queue.Queue() 
+signal_queue = queue.Queue()  # Cola para señales 
 
-fps = 10                  # Frecuencia de actualización de la gráfica (y de lectura de la cola)
+fps = 5                  # Frecuencia de actualización de la gráfica (y de lectura de la cola)
 visible_time = 10         
 max_points = visible_time * fps 
 
@@ -35,6 +38,25 @@ removed_temperature = []
 removed_humidity = []
 removed_time = []
 
+# --- CSV Thread Setup ---
+csv_queue = queue.Queue()
+# Formato de fecha con guiones: YYYY-MM-DD_HH-MM-SS
+csv_filename = f"cansat_telemetry_{datetime.datetime.now().strftime('%d-%m-%Y_%H-%M-%S')}.csv"
+
+def csv_writer_thread(csv_queue, filename):
+    with open(filename, "a", newline="") as file:
+        writer = csv.writer(file)
+        # Escribir encabezados solo una vez
+        writer.writerow(['Time (s)', 'Pitch', 'Roll', 'Yaw', 'Altitude (m)', 'Temperature (°C)', 'Humidity (%)', 'Battery Voltage (V)', 'Battery Current (mA)', 'Latitude', 'Longitude'])
+        while True:
+            row = csv_queue.get()
+            if row is None:  # Señal para terminar el hilo
+                break
+            writer.writerow(row)
+            file.flush()
+
+csv_thread = threading.Thread(target=csv_writer_thread, args=(csv_queue, csv_filename))
+csv_thread.start()
 
 # Layout container that the 3D model is placed inside of
 cansat_canvas = canvas(align="left",background=vec(0.15, 0.15, 0.15), width = 750)
@@ -159,80 +181,97 @@ print(f"Iniciando CanSat Dashboard...")
 
 # 1. Iniciar el hilo de procesamiento de datos
 # Esto arranca la lectura serial en segundo plano
-data_thread = start_data_thread(data_queue)
+data_thread = start_data_thread(data_queue, signal_queue)
 
-# 2. Bucle principal de VPython
-while True:
-    
-    # 3. Leer los datos decodificados del hilo serial
-    get_new_data() 
-    
-    # 4. Actualizar la rotación del modelo 3D
-    update_rotation()
-    
-    # 5. Actualizar la etiqueta de advertencia/estado
-    voltage = current_data.get('Battery Voltage', 0)
-    
-    if out_of_date:
-        warning_label.text = "⚠ Out of Date! No data received."
-    else:
-        # Mostramos datos clave en el dashboard
-        warning_label.text = (
-            f"DATA LIVE | Alt: {current_data.get('Altitude', 0):.2f} m | "
-            f"Temp: {current_data.get('Temperature', 0)}°C | "
-            f"Batt: {voltage:.2f} V"
-        )
+last_loop_time = time.perf_counter()
 
-    # 6. Obtener los valores decodificados para las gráficas
-    # NOTA: Asumo que tu "Pressure" en la gráfica debe usar "Altitude" o 
-    # si tienes un valor de presión explícito, ajusta la clave. Usaré 'Altitude' como ejemplo.
-    pressure_or_altitude = current_data.get('Altitude', 0) 
-    temperature = current_data.get('Temperature', 0)
-    humidity = current_data.get('Rel. humidity', 0)
+try:
+    while True:
+        loop_start = time.perf_counter()
 
-    # 7. Agregar valores a las gráficas (usando el tiempo real)
-    current_time_sec = i / fps
-    
-    atmospheric_pressure_curve.plot(current_time_sec, pressure_or_altitude)
-    temperature_curve.plot(current_time_sec, temperature)
-    relative_humidity_curve.plot(current_time_sec, humidity)
-    
-    # 8. Desplazar la gráfica cuando alcanza el límite de tiempo (sin cambios)
-    if i > max_points:
-        shift_amount = 1 / fps
-        temperature_graph.xmin += shift_amount
-        temperature_graph.xmax += shift_amount
-        atmospheric_pressure_graph.xmin += shift_amount
-        atmospheric_pressure_graph.xmax += shift_amount
-        relative_humidity_graph.xmin += shift_amount
-        relative_humidity_graph.xmax += shift_amount
+        # 3. Leer los datos decodificados del hilo serial
+        get_new_data() 
+        
+        # 4. Actualizar la rotación del modelo 3D
+        update_rotation()
+        
+        # 5. Actualizar la etiqueta de advertencia/estado
+        voltage = current_data.get('Battery Voltage', 0)
+        
+        try:
+            signal, value = signal_queue.get_nowait()
+            if signal == "new_data":
+                print("Nuevo dato recibido:", value)
+            elif signal == "threshold_exceeded":
+                print("¡Umbral superado! Temperatura:", value)
+        except queue.Empty:
+            pass
+        
+        if out_of_date:
+            warning_label.text = "⚠ Out of Date! No data received."
+        else:
+            warning_label.text = (
+                f"DATA LIVE | Alt: {current_data.get('Altitude', 0):.2f} m | "
+                f"Temp: {current_data.get('Temperature', 0)}°C | "
+                f"Batt: {voltage:.2f} V"
+            )
 
-        # Lógica para guardar en CSV
-        # Guardaremos el último paquete completo en el CSV cada 10 segundos
-        if i % (10 * fps) == 0:
-            csv_data = [
-                current_time_sec, 
-                current_data.get('Pitch', 0), 
-                current_data.get('Roll', 0), 
-                current_data.get('Yaw', 0), 
-                current_data.get('Altitude', 0), 
-                current_data.get('Temperature', 0), 
-                current_data.get('Rel. humidity', 0), 
-                current_data.get('Battery Voltage', 0), 
-                current_data.get('Battery Current', 0),
-                current_data.get('Latitude', 0),
-                current_data.get('Longitude', 0)
-            ]
-            
-            # Abrir archivo en modo append para agregar datos
-            with open("cansat_telemetry_data.csv", "a", newline="") as file:
-                writer = csv.writer(file)
-                # Escribir encabezados si el archivo está vacío
-                if file.tell() == 0:
-                    writer.writerow(['Time (s)', 'Pitch', 'Roll', 'Yaw', 'Altitude (m)', 'Temperature (°C)', 'Humidity (%)', 'Battery Voltage (V)', 'Battery Current (mA)', 'Latitude', 'Longitude'])
-                writer.writerow(csv_data)
+        # 6. Obtener los valores decodificados para las gráficas
+        pressure_or_altitude = current_data.get('Altitude', 0) 
+        temperature = current_data.get('Temperature', 0)
+        humidity = current_data.get('Rel. humidity', 0)
 
-    i += 1
-    
-    # Controla la velocidad de actualización de la pantalla
-    rate(fps)
+        # 7. Agregar valores a las gráficas (usando el tiempo real)
+        current_time_sec = i / fps
+        
+        atmospheric_pressure_curve.plot(current_time_sec, pressure_or_altitude)
+        temperature_curve.plot(current_time_sec, temperature)
+        relative_humidity_curve.plot(current_time_sec, humidity)
+        
+        # 8. Desplazar la gráfica cuando alcanza el límite de tiempo (sin cambios)
+        if i > max_points:
+            shift_amount = 1 / fps
+            temperature_graph.xmin += shift_amount
+            temperature_graph.xmax += shift_amount
+            atmospheric_pressure_graph.xmin += shift_amount
+            atmospheric_pressure_graph.xmax += shift_amount
+            relative_humidity_graph.xmin += shift_amount
+            relative_humidity_graph.xmax += shift_amount
+
+            # Guardar en CSV usando el hilo
+            if i % (10 * fps) == 0:
+                csv_data = [
+                    current_time_sec, 
+                    current_data.get('Pitch', 0), 
+                    current_data.get('Roll', 0), 
+                    current_data.get('Yaw', 0), 
+                    current_data.get('Altitude', 0), 
+                    current_data.get('Temperature', 0), 
+                    current_data.get('Rel. humidity', 0), 
+                    current_data.get('Battery Voltage', 0), 
+                    current_data.get('Battery Current', 0),
+                    current_data.get('Latitude', 0),
+                    current_data.get('Longitude', 0)
+                ]
+                csv_queue.put(csv_data)
+
+        # --- Control estricto de frecuencia usando perf_counter ---
+        elapsed = time.perf_counter() - loop_start
+        sleep_time = max(0, (1.0 / fps) - elapsed)
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+        # Medición real de frecuencia
+        actual_elapsed = time.perf_counter() - last_loop_time
+        last_loop_time = time.perf_counter()
+        actual_fps = 1.0 / actual_elapsed if actual_elapsed > 0 else 0
+        if i % fps == 0:
+            print(f"Frecuencia real del bucle: {actual_fps:.2f} Hz (esperada: {fps} Hz)")
+
+        i += 1
+
+except KeyboardInterrupt:
+    pass
+finally:
+    csv_queue.put(None)
+    csv_thread.join()

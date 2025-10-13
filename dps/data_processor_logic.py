@@ -4,6 +4,8 @@ import queue
 import time
 import serial # Importamos la librería pyserial
 
+port_name = 'COM14'  # <--- Cambia esto al puerto correcto
+
 # --- 1. Definición del Formato Binario (struct) ---
 # Basado en la imagen: 13 floats ('f') y 3 ints ('i')
 # '<' indica Little-endian (el orden de bytes más común. Si falla, prueba con '>')
@@ -26,7 +28,7 @@ FIELD_NAMES = [
 
 print(f"Decoder iniciado. Tamaño del registro esperado: {RECORD_SIZE} bytes.")
 
-def serial_data_processor(data_queue, port_name='COM14', baud_rate=115200):
+def serial_data_processor(data_queue, signal_queue, port_name='COM14', baud_rate=115200):
     """
     Lee datos binarios reales del puerto serial, los decodifica usando struct, 
     y coloca el diccionario de datos decimales en la cola.
@@ -78,6 +80,16 @@ def serial_data_processor(data_queue, port_name='COM14', baud_rate=115200):
                     # Envía el paquete decimal a la cola compartida
                     data_queue.put(data_packet)
                     
+                    # --- Aquí señalizamos ---
+                    signal_queue.put(("new_data", data_packet))
+                    # Ejemplo: umbral de temperatura
+                    if data_packet.get("Temperature", 0) > 40:
+                        signal_queue.put(("threshold_exceeded", data_packet["Temperature"]))
+                except struct.error as e:
+                    # Esto ocurre si el formato no coincide o si hubo corrupción de datos.
+                    print(f"Error de struct: {e}. Descartando primer byte del búfer para intentar resincronizar...")
+                    buffer = buffer[1:] # Elimina el primer byte (posible byte corrupto) y busca el siguiente paquete válido
+                    
                 except struct.error as e:
                     # Esto ocurre si el formato no coincide o si hubo corrupción de datos.
                     print(f"Error de struct: {e}. Descartando primer byte del búfer para intentar resincronizar...")
@@ -88,7 +100,7 @@ def serial_data_processor(data_queue, port_name='COM14', baud_rate=115200):
             break
         except Exception as e:
             print(f"Error inesperado en el procesador: {e}")
-            
+            pass
         time.sleep(0.01) # Pequeña pausa para no saturar la CPU
 
     # 3. Cerrar el puerto serial al salir del bucle
@@ -96,12 +108,12 @@ def serial_data_processor(data_queue, port_name='COM14', baud_rate=115200):
     print("Conexión serial cerrada.")
 
 
-def start_data_thread(data_queue):
+def start_data_thread(data_queue, signal_queue):
     """Inicializa y comienza el hilo del procesador de datos."""
     # 💡 NOTA: Puedes modificar 'port_name' y 'baud_rate' aquí si los conoces
     processor_thread = threading.Thread(
         target=serial_data_processor, 
-        args=(data_queue, '/dev/ttyUSB0', 115200), 
+        args=(data_queue, signal_queue, 'com14', 115200), 
         daemon=True
     )
     processor_thread.start()
